@@ -30,8 +30,8 @@ Known gaps (minor, not blocking):
 - [x] Subscription marking (`access.status`), configurable packages.
 - [x] `research` MCP prompt.
 - [x] Smoke test over stdio (`tools/smoke_test.py`) and single-call helper (`tools/call.py`).
-- [ ] `open_in_otzar` with a page: the app's command line accepts `BOOK=<id>`; a page argument
-      is unknown. Needs a live try with the user watching the app (it opens a window).
+- [x] `open_in_otzar` with a page, through the app's `OtzarBook://book/<id>/p/<page>/...` link
+      (verified with the user watching the app, 2026-11-03). Each call opens another app window.
 - [ ] Claude desktop app registration: the app is not installed on this machine (no
       `%APPDATA%\Claude`). README has the config snippet for when it is.
 

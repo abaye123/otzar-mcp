@@ -125,6 +125,23 @@ pub struct BookIdParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct OpenParams {
+    /// Book id from the catalog.
+    pub book_id: i64,
+    /// Page order in the book, 1-based (the `page` field of search_text results). Default 1.
+    pub page: Option<i64>,
+}
+
+/// The app's own book link, as produced by its "copy link" command.
+fn book_link(book_id: i64, page: i64) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("OtzarBook://book/{book_id}/p/{page}/t/{stamp}/fs/0/start/0/end/0/c")
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct FindAuthorsParams {
     /// Words from the author's name.
     pub name: String,
@@ -485,15 +502,19 @@ impl OtzarServer {
     }
 
     #[tool(
-        description = "Open a book in the official Otzar HaHochma application on the user's screen. Use when the user wants to see the scanned page.",
+        description = "Open a book at a page in the official Otzar HaHochma application on the user's screen (a new app window). Use when the user wants to see the scanned page. Books outside the subscription open with a 'no license' message.",
         annotations(read_only_hint = false, destructive_hint = false, open_world_hint = false)
     )]
-    async fn open_in_otzar(&self, Parameters(p): Parameters<BookIdParams>) -> Result<CallToolResult, ErrorData> {
+    async fn open_in_otzar(&self, Parameters(p): Parameters<OpenParams>) -> Result<CallToolResult, ErrorData> {
         self.run(move |st| {
             let exe = st.config.otzar_exe();
             anyhow::ensure!(exe.is_file(), "otzar.exe not found at {} (set otzar_exe in otzar-mcp.toml)", exe.display());
+            let page = p.page.unwrap_or(1).max(1);
+            let access = st.with_catalog(|c| Ok(c.access(p.book_id)))?;
+            let link = book_link(p.book_id, page);
             let mut cmd = std::process::Command::new(&exe);
-            cmd.arg(format!("BOOK={}", p.book_id))
+            // Same command line as the app's OtzarHahochma.bat for an OTZARBOOK link.
+            cmd.arg(format!("BOOK={link}"))
                 .current_dir(exe.parent().unwrap_or(std::path::Path::new(".")))
                 // Never let the child inherit our stdio: it carries the MCP protocol.
                 .stdin(std::process::Stdio::null())
@@ -506,7 +527,14 @@ impl OtzarServer {
                 cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
             }
             cmd.spawn().with_context(|| format!("starting {}", exe.display()))?;
-            Ok(serde_json::json!({ "opened": true, "book_id": p.book_id }))
+            let mut result = serde_json::json!({ "opened": true, "book_id": p.book_id, "page": page, "link": link });
+            if access.status == "not_in_subscription" {
+                result["warning"] = serde_json::json!(format!(
+                    "This book is outside the subscription ({}); the app will show a no-license message.",
+                    access.groups.join(", ")
+                ));
+            }
+            Ok(result)
         })
         .await
     }
@@ -591,7 +619,7 @@ impl OtzarServer {
 
 #[tool_handler(
     name = "otzar-mcp",
-    instructions = "Local, read-only access to the user's Otzar HaHochma (אוצר החכמה) library: about 163,000 scanned Jewish books. Query in Hebrew. Use find_books / find_authors / browse_categories for the catalog, get_book for one record, word_stats to see how common a word is in the full text, and open_in_otzar to show a book in the official app. Always cite book name and id. Each book carries access.status: 'included', 'not_in_subscription' (name the missing package to the user) or 'unknown'. If a tool fails, call server_status."
+    instructions = "Local, read-only access to the user's Otzar HaHochma (אוצר החכמה) library: about 163,000 scanned Jewish books. Query in Hebrew. Use find_books / find_authors / browse_categories for the catalog, get_book for one record, word_stats to see how common a word is in the full text, search_text to find words in the full text (books and pages), and open_in_otzar to show a book at a page in the official app (opens a new window; ask before opening many). Always cite book name and id. Each book carries access.status: 'included', 'not_in_subscription' (name the missing package to the user) or 'unknown'. If a tool fails, call server_status."
 )]
 #[rmcp::prompt_handler]
 impl ServerHandler for OtzarServer {}

@@ -64,7 +64,7 @@ carries `id` (the catalog `system_books.id`) so Claude can cite precisely.
 | `find_authors` | `name`, `limit` | authors with id, era, book count | 1 | done |
 | `browse_categories` | `category_id?`, `limit` | category, children, linked books with first page id | 1 | done |
 | `word_stats` | `word`, `include_alternatives`, `include_containing`, `limit` | books/occurrences, linked variants and abbreviations, containing words | 1 | done |
-| `open_in_otzar` | `book_id` | `{opened}` | 1 | done (page parameter unknown, see ROADMAP) |
+| `open_in_otzar` | `book_id`, `page` (page order, from `search_text`) | `{opened, page, link, warning?}`; opens a new app window via the app's `OtzarBook://` link | 1 | done |
 | `search_text` | `query`, `mode` (`near` = within `distance` words, default 30 like the app / `phrase` = adjacent), `distance`, `prefixes` (one or two prefix letters ו ה ב כ ל מ ש ד, like "אותיות שימוש"), `category_id` (hits limited to the category's word ranges), `book_ids`, catalog filters (`title`, `author`, `author_id`, `year_from`, `year_to`, `place`, `period`), `only_subscription`, `limit`, `offset`, `pages_per_book` | `{total_books, total_hits, results: [book summary + hits, hit_pages, pages[{page, label, scan, page_id, hits}]]}` ranked by hits (the app's "relevance") | 2 | done |
 | `read_page` | `book_id`, `page`, `count` (max 5) | OCR text of the pages | 3 | blocked: text only in encrypted `.book` files |
 

@@ -216,5 +216,14 @@ Two ways to get page text, both need the publisher (docs/LEGAL.md, docs/ROADMAP.
 ## Official app
 
 - Electron; code is V8 bytecode (`index_c.jsc`, bytenode) inside `resources\app.asar`: not readable as JS.
-- `OtzarHahochma.bat`: `start /D %OTZARAPPCD% %OTZARAPPCD%\otzar.exe BOOK=%1`. A page argument is unknown.
+- `OtzarHahochma.bat`: `start /D %OTZARAPPCD% %OTZARAPPCD%\otzar.exe BOOK=%1`, where `%1` is an
+  `OTZARBOOK:` link (registered URL protocol, `HKCR\OTZARBOOK`). On this machine the protocol's
+  command is stored unexpanded (`%OTZARAPPCD%/...`), so Windows cannot launch it; start
+  `otzar.exe` directly instead.
+- Book link format, as produced by the app's "copy link" (verified 2026-11-03):
+  `OtzarBook://book/<book id>/p/<page>/t/<unix ms>/fs/0/start/0/end/0/c`.
+  `<page>` is the page order in the book (1-based, the `position` in books_data), not the
+  printed label. `otzar.exe "BOOK=<link>"` opens it, also while the app runs; each call opens
+  an additional app window. `BOOK=<id>` alone does not work. A book outside the subscription
+  opens with "אין לך רישיון לצפיה בספר זה".
 - Local ports configured: app 3000, mef 3030, search server 6060 (not listening when checked).
