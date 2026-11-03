@@ -60,6 +60,16 @@ Not available: page text (`read_page`, snippets). The text exists only inside th
 book files; see [docs/ROADMAP.md](docs/ROADMAP.md), phase 3.
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Example
+
+Asked "what are the sources for eating dairy on Shavuot, from the Rishonim and Acharonim, with
+book and page?", a fresh Claude session made 10 searches in about a minute and returned about
+25 sources (Kol Bo, Rema, Mishna Berura, Aruch HaShulchan, Bnei Yissachar and more) with book
+ids, volumes, page numbers and subscription access, plus the main reasons for the custom.
+The full question, every search it ran and the verbatim answer are in
+[docs/examples/shavuot-dairy.md](docs/examples/shavuot-dairy.md). The source content and
+reasons there are Claude's own knowledge, not verified against the pages.
+
 ## Testing
 
 ```powershell
