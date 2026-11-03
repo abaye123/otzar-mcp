@@ -335,9 +335,9 @@ impl Catalog {
         Access { status, groups: names }
     }
 
-    fn year_label(&self, from: i64, to: i64) -> (Option<String>, Option<i32>) {
-        let first = self.years.get(&from);
-        let last = self.years.get(&to);
+    fn year_label(&self, from: Option<i64>, to: Option<i64>) -> (Option<String>, Option<i32>) {
+        let first = from.and_then(|f| self.years.get(&f));
+        let last = to.and_then(|t| self.years.get(&t));
         let label = match (first, last) {
             (Some(a), Some(b)) if from != to => Some(format!("{} - {}", a.0, b.0)),
             (Some(a), _) => Some(a.0.clone()),
@@ -403,7 +403,8 @@ impl Catalog {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let years: Option<(i64, i64)> = self
+        // Either column can be NULL (e.g. a start year without an end year).
+        let years: Option<(Option<i64>, Option<i64>)> = self
             .conn
             .prepare_cached("select fromYear, toYear from bookyears where bookId = ?1 limit 1")?
             .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))

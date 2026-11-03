@@ -48,6 +48,8 @@ src/config.rs     otzar-mcp.toml, disk detection by content, default paths
 src/hebrew.rs     Hebrew numerals and year parsing (unit tested)
 tools/smoke_test.py         end-to-end MCP test over stdio against the real data
 tools/call.py               call one tool: python -I tools\call.py search_text '{"query": "שבת"}'
+tools/agent_test.py         a fresh headless Claude answers a research question with the
+                            installed server; prints its tool calls, errors and answer (costs tokens)
 tools/research/             phase-0 scripts for reverse-engineering formats (read-only)
 scripts/                    sign.ps1, install.ps1
 otzar-mcp.example.toml      documented config template

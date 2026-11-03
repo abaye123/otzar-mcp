@@ -34,6 +34,8 @@ CALLS = [
     ("search_text", {"query": "שבת קודש", "limit": 1, "pages_per_book": 2}),
     ("search_text", {"query": "והאידנא", "author": "קוק", "limit": 3, "pages_per_book": 2}),
     ("search_text", {"query": "האידנא", "prefixes": True, "limit": 1, "pages_per_book": 1}),
+    # Regression: books with a NULL toYear in bookyears used to fail the whole search.
+    ("search_text", {"query": "מאכלי חלב בשבועות", "mode": "phrase", "prefixes": True, "limit": 25, "pages_per_book": 1}),
     # 79 = ספרי יסוד / רמב"ם
     ("search_text", {"query": "שבת", "category_id": 79, "limit": 2, "pages_per_book": 2}),
     ("find_books", {"category_id": 79, "limit": 2}),

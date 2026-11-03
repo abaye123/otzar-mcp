@@ -48,6 +48,18 @@ Known gaps (minor, not blocking):
       compare with `tools/research/compare_engine.py` after extending it to prefixes.
 - [ ] Optional query expansion with `fsalternativewords` (the engine does not do it by default).
 
+## Agent test (2026-11-03)
+
+A fresh headless Claude answered "sources for eating dairy on Shavuot" with the installed
+server (`tools/agent_test.py`).
+
+- Run 1: 19 calls, 3 failed (`bookyears.toYear` can be NULL; fixed). Claude quoted from
+  memory and said so only at the end.
+- Run 2, after the fix and clearer server instructions (page text unavailable, label wording
+  from memory, search tips): 11 calls, 0 errors, about 25 sources with page and access, wording
+  clearly labeled as unverified, offers open_in_otzar.
+- Remaining limit: without page text Claude cannot confirm the context of a hit.
+
 ## Phase 3 - page text - blocked on the publisher
 
 - [x] Located the OCR text (2026-11-03): it is not in any readable file; only the encrypted
