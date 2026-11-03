@@ -1,0 +1,4 @@
+/target
+/otzar-mcp.toml
+__pycache__/
+*.log

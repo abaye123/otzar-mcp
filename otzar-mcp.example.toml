@@ -1,0 +1,22 @@
+# otzar-mcp configuration. Copy to otzar-mcp.toml next to otzar-mcp.exe.
+# Every key is optional.
+
+# Root of the Otzar HaHochma disk. Omit to detect it automatically by content
+# (searcher\fs.db + books\ + data\), whatever drive letter Windows assigns.
+# disk_root = 'D:\'
+
+# Catalog database. Default: the app's copy, then <disk>\data\data.db.
+# catalog_db = 'C:\OtzarApp\OtzarLocal\data.db'
+
+# Official app executable.
+# otzar_exe = 'C:\OtzarApp\OtzarLocal\launcher\bin\x64\app\otzar.exe'
+
+[subscription]
+# Codes of the packages your subscription includes. The server_status tool lists all codes
+# (e.g. KOOK = מוסד הרב קוק, CHABAD = ספריית חב"ד, MACHON = מכון ירושלים, OZ = עוז והדר).
+# Omit to report restricted books as "unknown"; an empty list marks them "not_in_subscription".
+# packages = ["KOOK", "MACHON"]
+
+[limits]
+# Upper bound for any limit argument.
+# max_results = 100
