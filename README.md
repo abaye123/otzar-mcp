@@ -54,7 +54,10 @@ Set `OTZAR_MCP_LOG=debug` for verbose logs (stderr).
 | `search_text` | full-text search (word, phrase, words near each other), books ranked by hits, with pages | yes |
 | `open_in_otzar` | open a book in the official app | yes |
 
-Planned: `read_page` (page text).
+Prompt `research(question)`: a research method for Claude with these tools.
+
+Not available: page text (`read_page`, snippets). The text exists only inside the encrypted
+book files; see [docs/ROADMAP.md](docs/ROADMAP.md), phase 3.
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Testing

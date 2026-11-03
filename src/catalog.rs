@@ -139,9 +139,15 @@ pub struct BookQuery {
     pub year_to: Option<i32>,
     pub place: Option<String>,
     pub period: Option<i64>,
+    /// Category id; includes all sub-categories.
+    pub category_id: Option<i64>,
     pub limit: usize,
     pub offset: usize,
 }
+
+/// A category and all its descendants (`union` guards against cycles).
+const CATEGORY_TREE: &str = "with recursive d(id) as (
+    select ?1 union select c.id from categories c join d on c.parentId = d.id)";
 
 #[derive(Debug, Serialize)]
 pub struct Page<T> {
@@ -342,6 +348,38 @@ impl Catalog {
         (label, am.map(hebrew::am_to_ce))
     }
 
+    /// Word-position ranges that a category (with its sub-categories) covers, per book.
+    /// A row with `pageId = 0` (positions 0..0) links the whole book, as do rows without
+    /// usable positions.
+    pub fn category_ranges(&self, category: i64) -> anyhow::Result<HashMap<u32, Vec<(u32, u32)>>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{CATEGORY_TREE} select cb.bookId, cb.pageId, cb.fromPos, cb.toPos from categorybooks cb
+             where cb.categoryId in (select id from d)"
+        ))?;
+        let rows = stmt.query_map([category], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let mut out: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+        for row in rows {
+            let (book, page, from, to) = row?;
+            let range = match (page, from, to) {
+                (Some(p), Some(f), Some(t)) if p != 0 && f >= 0 && t >= f => (f as u32, t as u32),
+                _ => (0, u32::MAX),
+            };
+            out.entry(book as u32).or_default().push(range);
+        }
+        for list in out.values_mut() {
+            list.sort_unstable();
+            list.dedup();
+        }
+        Ok(out)
+    }
+
     /// Summary of a book by id; `None` when it is not in the catalog.
     pub fn summary_by_id(&self, id: i64) -> anyhow::Result<Option<BookSummary>> {
         let row: Option<(String, String)> = self
@@ -473,6 +511,16 @@ impl Catalog {
             conds.push(format!(
                 "exists (select 1 from bookdata d where d.bookId = b.id and d.dor = ?{})",
                 args.len()
+            ));
+        }
+
+        if let Some(category) = q.category_id {
+            args.push(Value::Integer(category));
+            let n = args.len();
+            // categorybooks has no bookId index: collect the ids once through the categoryId index.
+            conds.push(format!(
+                "b.id in (with recursive d(id) as (select ?{n} union select c.id from categories c join d on c.parentId = d.id)
+                          select cb.bookId from categorybooks cb where cb.categoryId in (select id from d))"
             ));
         }
 

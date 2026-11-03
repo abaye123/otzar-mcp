@@ -110,6 +110,8 @@ pub struct FindBooksParams {
     pub place: Option<String>,
     /// Era (seder hadorot): 1 Mikra and Chazal, 2 Rishonim, 3 Acharonim 5300-5600, 4 Acharonim 5600-5700, 5 contemporary, 6 other.
     pub period: Option<i64>,
+    /// Category id from browse_categories (its sub-categories included).
+    pub category_id: Option<i64>,
     /// Max results (default 20).
     pub limit: Option<usize>,
     /// Results to skip, for paging.
@@ -175,6 +177,12 @@ pub struct SearchTextParams {
     pub place: Option<String>,
     /// Only books of this era (1-6, see find_books).
     pub period: Option<i64>,
+    /// Only hits inside this category (browse_categories id, sub-categories included). Categories
+    /// map to word ranges inside books, e.g. a commentary's section on one chapter.
+    pub category_id: Option<i64>,
+    /// Also match the words with one or two prefix letters (ו ה ב כ ל מ ש ד), like the app's
+    /// "אותיות שימוש". Default false.
+    pub prefixes: Option<bool>,
     /// Leave out books outside the user's subscription (default false: they are returned and marked).
     pub only_subscription: Option<bool>,
     /// Books per response (default 20).
@@ -211,6 +219,9 @@ struct SearchHit {
 #[derive(Serialize)]
 struct SearchResult {
     query: String,
+    prefixes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category_id: Option<i64>,
     mode: String,
     total_books: usize,
     total_hits: u64,
@@ -278,6 +289,7 @@ impl OtzarServer {
                 year_to: p.year_to,
                 place: p.place,
                 period: p.period,
+                category_id: p.category_id,
                 limit: st.limit(p.limit, 20),
                 offset: p.offset.unwrap_or(0),
             };
@@ -371,7 +383,7 @@ impl OtzarServer {
     }
 
     #[tool(
-        description = "Full-text search in the scanned books, with the same rules as the official Otzar search. Returns books ranked by number of hits (like the app's 'relevance'), each with the pages where the hits are (printed page label and scan name). One word, or several words: mode 'near' (default, words within 30 words of each other, like the app with הצמדת מילים off) or 'phrase' (adjacent and in order, like הצמדת מילים on). Words are matched exactly as printed: try prefixed forms too (ו, ה, ב, ל, ש, ד). Optional catalog filters restrict the books. Needs the disk.",
+        description = "Full-text search in the scanned books, with the same rules as the official Otzar search. Returns books ranked by number of hits (like the app's 'relevance'), each with the pages where the hits are (printed page label and scan name). One word, or several words: mode 'near' (default, words within 30 words of each other, like the app with הצמדת מילים off) or 'phrase' (adjacent and in order, like הצמדת מילים on). Words are matched exactly as printed; set prefixes=true to include forms with prefix letters. Optional catalog filters and category_id restrict the books and hits. Page text is not available. Needs the disk.",
         annotations(read_only_hint = true)
     )]
     async fn search_text(&self, Parameters(p): Parameters<SearchTextParams>) -> Result<CallToolResult, ErrorData> {
@@ -387,6 +399,11 @@ impl OtzarServer {
             let limit = st.limit(p.limit, 20);
             let offset = p.offset.unwrap_or(0);
             let pages_per_book = p.pages_per_book.unwrap_or(10).clamp(1, 50);
+            let prefixes = p.prefixes.unwrap_or(false);
+            let forms: Vec<Vec<String>> = words
+                .iter()
+                .map(|w| if prefixes { search::with_prefixes(w) } else { vec![w.clone()] })
+                .collect();
             let query = BookQuery {
                 title: p.title,
                 author: p.author,
@@ -395,10 +412,13 @@ impl OtzarServer {
                 year_to: p.year_to,
                 place: p.place,
                 period: p.period,
+                // A category restricts hits to its word ranges, handled below.
+                category_id: None,
                 limit: 0,
                 offset: 0,
             };
             st.with_catalog(|c| {
+                let ranges = p.category_id.map(|id| c.category_ranges(id)).transpose()?;
                 let mut restrict = c.book_ids(&query)?;
                 if let Some(ids) = &p.book_ids {
                     let given: std::collections::HashSet<i64> = ids.iter().copied().collect();
@@ -415,7 +435,7 @@ impl OtzarServer {
                         && (!only_subscription || c.access(id).status != "not_in_subscription")
                 };
                 st.with_words(|w| {
-                    let outcome = search::run(w, &words, mode, &keep)?;
+                    let outcome = search::run(w, &forms, mode, &keep, ranges.as_ref())?;
                     let mut results = Vec::new();
                     for &(book, hits) in outcome.ranked.iter().skip(offset).take(limit) {
                         let Some(summary) = c.summary_by_id(book as i64)? else { continue };
@@ -446,6 +466,8 @@ impl OtzarServer {
                         });
                     }
                     Ok(SearchResult {
+                        prefixes,
+                        category_id: p.category_id,
                         query: words.join(" "),
                         mode: match mode {
                             Mode::Phrase => "phrase".into(),
@@ -527,8 +549,49 @@ impl OtzarServer {
     }
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResearchArgs {
+    /// The research question (Hebrew or English).
+    pub question: String,
+}
+
+const RESEARCH_GUIDE: &str = "\
+Research this question in the user's Otzar HaHochma library with the otzar tools.
+
+Method:
+1. Plan the Hebrew search terms: the key words as printed, likely spellings and abbreviations
+   (word_stats shows how common a word is and its linked variants and abbreviations).
+2. search_text for each term. Use mode 'phrase' for fixed expressions and 'near' for ideas
+   expressed by several words. Set prefixes=true when the word may carry ו ה ב כ ל מ ש ד.
+   Narrow with author, years, period, place, book_ids or category_id when results are too broad.
+3. Use find_books, get_book and browse_categories to understand the sources: who wrote them,
+   when, and where a work is printed inside another book.
+4. Page text is not available through the tools. Do not invent quotations. Cite book name,
+   book id, volume and the printed page label (and scan name) for every source, and offer
+   open_in_otzar so the user can read the page.
+5. Mark sources outside the subscription (access.status 'not_in_subscription') with the
+   package name.
+6. Answer in the user's language, with the sources grouped by era (period), earliest first.
+
+Question: ";
+
+#[rmcp::prompt_router]
+impl OtzarServer {
+    #[rmcp::prompt(
+        name = "research",
+        description = "Guide Claude through researching a question in the Otzar HaHochma library and citing exact sources."
+    )]
+    async fn research(&self, Parameters(args): Parameters<ResearchArgs>) -> Vec<rmcp::model::PromptMessage> {
+        vec![rmcp::model::PromptMessage::new_text(
+            rmcp::model::Role::User,
+            format!("{RESEARCH_GUIDE}{}", args.question),
+        )]
+    }
+}
+
 #[tool_handler(
     name = "otzar-mcp",
     instructions = "Local, read-only access to the user's Otzar HaHochma (אוצר החכמה) library: about 163,000 scanned Jewish books. Query in Hebrew. Use find_books / find_authors / browse_categories for the catalog, get_book for one record, word_stats to see how common a word is in the full text, and open_in_otzar to show a book in the official app. Always cite book name and id. Each book carries access.status: 'included', 'not_in_subscription' (name the missing package to the user) or 'unknown'. If a tool fails, call server_status."
 )]
+#[rmcp::prompt_handler]
 impl ServerHandler for OtzarServer {}

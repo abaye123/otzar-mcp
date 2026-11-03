@@ -47,6 +47,7 @@ src/pages.rs      per-book page lists (books_data*.bin): word position -> page
 src/config.rs     otzar-mcp.toml, disk detection by content, default paths
 src/hebrew.rs     Hebrew numerals and year parsing (unit tested)
 tools/smoke_test.py         end-to-end MCP test over stdio against the real data
+tools/call.py               call one tool: python -I tools\call.py search_text '{"query": "שבת"}'
 tools/research/             phase-0 scripts for reverse-engineering formats (read-only)
 scripts/                    sign.ps1, install.ps1
 otzar-mcp.example.toml      documented config template

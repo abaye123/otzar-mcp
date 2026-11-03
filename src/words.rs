@@ -173,6 +173,35 @@ impl FullText {
         Ok(out)
     }
 
+    /// Like `counts`, for several spellings of one query word (e.g. with prefixes).
+    /// Different tokens are different occurrences, so counts add up.
+    pub fn counts_any(&self, forms: &[String], keep: &dyn Fn(u32) -> bool) -> anyhow::Result<HashMap<u32, u32>> {
+        let mut out: HashMap<u32, u32> = HashMap::new();
+        for form in forms {
+            for (book, n) in self.counts(form, keep)? {
+                *out.entry(book).or_default() += n;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Like `positions`, for several spellings of one query word: union, ascending.
+    pub fn positions_any(&self, forms: &[String], keep: &dyn Fn(u32) -> bool) -> anyhow::Result<Positions> {
+        let mut out: Positions = HashMap::new();
+        for form in forms {
+            for (book, list) in self.positions(form, keep)? {
+                out.entry(book).or_default().extend(list);
+            }
+        }
+        if forms.len() > 1 {
+            for list in out.values_mut() {
+                list.sort_unstable();
+                list.dedup();
+            }
+        }
+        Ok(out)
+    }
+
     /// Merged statistics for a word across all segments.
     pub fn stat(&self, word: &str, keep: &dyn Fn(u32) -> bool) -> anyhow::Result<Option<WordStat>> {
         let counts = self.counts(word, keep)?;

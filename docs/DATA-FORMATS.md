@@ -14,10 +14,11 @@ Mark new findings with how they were verified. "Assumed" means not yet verified.
 | `data\books_data.bin` | 10 GB | gzip members | per-book JSON: pages, word ranges, TOC | decoded, see below |
 | `data\books_data_info.bin` | 12 MB | `{u64,u32}` per book id | index into books_data.bin | decoded |
 | `data\books_data\*.bin` | | bundles / single gzip | newer books | decoded |
-| `data\books.cords` | 114 GB | binary, u16 quadruples? | assumed OCR word coordinates | todo |
-| `data\books_cords\*.cords`, `cords_data\*.cords` | | binary | per-version / per-book coordinates | todo |
-| `data\allTsiyuns.bin` | 540 MB | binary | assumed references (ציונים) | todo |
-| `data\mefData\<id>` | | | indexes (מפתחות) per book | todo |
+| `data\books.cords` | 114 GB | u16 × 4 per word: x, y, w, h | word boxes on the scans, **no text** | checked |
+| `data\books_lst.cords` | 12 MB | 16 bytes per book id | index into books.cords | checked |
+| `data\books_cords\*.cords`, `cords_data\*.cords` | | same kind | word boxes for newer books | checked |
+| `data\allTsiyuns.bin`, `allTsiyuns.words.bin` | 540 MB, 4 MB | binary + fixed-width UTF-8 strings | references (ציונים) | not used |
+| `data\mefData\<id>` | | zlib whose bytes were stored as UTF-8 text (decode UTF-8 -> latin-1 bytes -> zlib) | JSON page sections with rectangles, **no text** | checked |
 | `data\ek.enc` | 266 KB | encrypted | assumed encryption keys | not touched |
 | `books\<id>.book` | 161,119 files | header `BKF` + encrypted body | page images, likely DjVu (`splitDjvuFrom`, `djvuHandlersCount` in config) | encrypted |
 | `searcher\fs.db` | 9.3 GB | SQLite | full dictionary, see below | used |
@@ -44,7 +45,7 @@ Mark new findings with how they were verified. "Assumed" means not yet verified.
 | `bookssubbooks` | 1,865 | works printed inside a book: `name`, `author` (trailing `)` in the data), `parentBookId`, `pageStart` |
 | `categories` | 170,462 | tree: `id`, `title`, `level`, `position`, `parentId` (0 = root), `categoryTypeId` |
 | `categorytypes` | 5 | 1 ספרי יסוד, 2 מפרשים, 3 נושאים, 4 מאגרים, 5 ספרי טקסט |
-| `categorybooks` | 9,242,322 | `bookId`, `categoryId`, `pageId` (global page id), `fromPos`, `toPos` (word positions). Indexed on categoryId and pageId, **not** bookId |
+| `categorybooks` | 9,242,322 | `bookId`, `categoryId`, `pageId` (global page id), `fromPos`, `toPos` (word positions, same space as postings; `fromPos` = the page's `firstWord`). A row with `pageId = 0` and `0, 0` links the **whole book** (typical for upper categories). Indexed on categoryId and pageId, **not** bookId |
 | `sifreiyesod` | 69,254 | links base texts to categories and pages: `categoryId`, `bookId`, `pageId`, `pageName` (e.g. `P0140`) |
 | `systemmafs` | 2,648 | index entries: `bookId`, `pageId` (e.g. `S0066`), `cords` (`x,y,w,h`), `mafkey`, `mafvalue` |
 | `packages` | 25 | `id`, **`title` = code** (`KOOK`), **`name` = Hebrew**, `active` |
@@ -198,6 +199,19 @@ Lookup order: `<book_id>.bin`, then bundles newest first, then `books_data_info.
 `books` keys are book ids; `files[].filename` names a binary `.rst` holding the locations,
 `start`/`end` index into it, `rate` is the ranking score. The binary `.rst` starts with a
 u32 count followed by fixed-size records (to be decoded).
+
+## Where is the page text? (checked 2026-11-03)
+
+Not in any readable file. The index stores word positions without the text, `.cords` hold
+word boxes, `mefData` holds section rectangles, `books_data` holds page metadata. The OCR text
+can only be inside the encrypted `books\*.book` files (likely the DjVu hidden-text layer).
+Two ways to get page text, both need the publisher (docs/LEGAL.md, docs/ROADMAP.md phase 3):
+
+1. The publisher provides the method or a library to read `.book` files.
+2. Rebuild text from the inverted index: scanning every dictionary entry of every segment
+   (about 150 M tokens) and writing (book, position) -> token would recreate the full text of
+   the library locally. Technically possible without touching the encryption, but it is a
+   full copy of the database, which the project rules forbid without explicit approval.
 
 ## Official app
 

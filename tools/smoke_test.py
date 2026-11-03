@@ -33,6 +33,10 @@ CALLS = [
     ("search_text", {"query": "שבת קודש", "mode": "phrase", "limit": 2, "pages_per_book": 3}),
     ("search_text", {"query": "שבת קודש", "limit": 1, "pages_per_book": 2}),
     ("search_text", {"query": "והאידנא", "author": "קוק", "limit": 3, "pages_per_book": 2}),
+    ("search_text", {"query": "האידנא", "prefixes": True, "limit": 1, "pages_per_book": 1}),
+    # 79 = ספרי יסוד / רמב"ם
+    ("search_text", {"query": "שבת", "category_id": 79, "limit": 2, "pages_per_book": 2}),
+    ("find_books", {"category_id": 79, "limit": 2}),
 ]
 
 
@@ -84,6 +88,14 @@ def main() -> int:
         failures += bool(failed)
         print(f"\n=== {name} {json.dumps(args, ensure_ascii=False)}  [{elapsed:.0f} ms]{'  FAILED' if failed else ''}")
         print(text[:1200] if text else json.dumps(reply, ensure_ascii=False)[:1200])
+
+    prompts = send("prompts/list")
+    names = [p["name"] for p in prompts.get("result", {}).get("prompts", [])]
+    print("\nprompts:", names)
+    got = send("prompts/get", {"name": "research", "arguments": {"question": "מנהג נר שבת"}})
+    prompt_ok = "result" in got and got["result"]["messages"]
+    print("prompts/get research:", "ok" if prompt_ok else json.dumps(got, ensure_ascii=False)[:400])
+    failures += not prompt_ok
 
     proc.stdin.close()
     proc.wait(timeout=10)
