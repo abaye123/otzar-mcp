@@ -11,8 +11,9 @@ Mark new findings with how they were verified. "Assumed" means not yet verified.
 | `info\key.ol`, `key.ol.ltc` | 886 B, 50 B | assumed encrypted | license: probably the subscribed packages | not touched |
 | `data\data.db` | 714 MB | SQLite | catalog (older copy; the app uses `C:\OtzarApp\OtzarLocal\data.db`, 721 MB) | used |
 | `data\disk-ver.txt`, `db_ver.txt` | | text | `24`, `7.10000` | used |
-| `data\books_data.bin` | 10 GB | starts with gzip magic `1F 8B` | unknown | todo |
-| `data\books_data_info.bin` | 12 MB | binary | assumed index into books_data.bin | todo |
+| `data\books_data.bin` | 10 GB | gzip members | per-book JSON: pages, word ranges, TOC | decoded, see below |
+| `data\books_data_info.bin` | 12 MB | `{u64,u32}` per book id | index into books_data.bin | decoded |
+| `data\books_data\*.bin` | | bundles / single gzip | newer books | decoded |
 | `data\books.cords` | 114 GB | binary, u16 quadruples? | assumed OCR word coordinates | todo |
 | `data\books_cords\*.cords`, `cords_data\*.cords` | | binary | per-version / per-book coordinates | todo |
 | `data\allTsiyuns.bin` | 540 MB | binary | assumed references (ציונים) | todo |
@@ -21,7 +22,7 @@ Mark new findings with how they were verified. "Assumed" means not yet verified.
 | `books\<id>.book` | 161,119 files | header `BKF` + encrypted body | page images, likely DjVu (`splitDjvuFrom`, `djvuHandlersCount` in config) | encrypted |
 | `searcher\fs.db` | 9.3 GB | SQLite | full dictionary, see below | used |
 | `searcher\tiny.db` | 170 MB | SQLite + FTS5 trigram | frequent-words dictionary | used |
-| `searcher\words.bin` | 100 GB | binary | posting lists | partly understood |
+| `searcher\words.bin` | 100 GB | binary | posting lists | decoded, see below |
 | `searcher\searcherOtzar.exe` | 175 KB | native exe (WS2_32, "searcher for Otzar HaHochma app", writes `./results/`) | official search engine | todo (phase 0) |
 | `searcher\results\*.rst` | KB | JSON (`mn_*.rst`) + binary | official search results | partly understood |
 | `searcher\app\x64\addBooks.exe` | | .NET (PdfPig) | adds user PDFs to the index | not needed |
@@ -57,8 +58,8 @@ Mark new findings with how they were verified. "Assumed" means not yet verified.
 | `pages`, `pagecoords`, `pagedata`, `tsiyuns`, `mm*` | 0 | empty in this install: page data lives on the disk |
 
 Page ids: `categorybooks.pageId` is a global page id (e.g. 1475667), not a printed page
-number. The mapping page id -> (book, page number) is not in `data.db`; candidates are
-`data\books_data.bin` and the `.cords` files. Needed for phase 2/3.
+number. The mapping page id -> (book, page) is in `data\books_data.bin` (section below).
+`categorybooks.fromPos`/`toPos` are word positions in the same space as the posting lists.
 
 ## Full-text dictionary (`searcher\fs.db`, `tiny.db`)
 
@@ -72,23 +73,117 @@ number. The mapping page id -> (book, page number) is not in `data.db`; candidat
   substring lookup (`match '"שבתות"'`).
 - Lookup by `w` is under 1 ms.
 
-## Posting lists (`searcher\words.bin`) - partly understood
+## Posting lists (`searcher\words.bin`) - decoded
 
-File starts `D6 E0 07 00 ...`. At offset `p` for a rare token (b=1, l=1, p=23107559):
+Verified 2026-11-03 on `והאידנא`, `שבתות` and `''`: for each, the computed end of the record is
+exactly the next record's start, and the next record's word has a dictionary row whose `p`
+equals that computed offset. All integers little-endian.
 
 ```
-01 00 00 00   u32 books (=1)
-01 00 00 00   u32 occurrences (=1)
-51 C3 00 00   u32 book id (=50001)
-01 00 00 00   u32 hits in this book
-00 00 00 00   ?
-A1 F1 02 00   u32 ? (192929, maybe word position)
-0A 00 00 00   u32 ? (10)
-20 28 D7 95 ...   bytes that look like UTF-8 Hebrew (context or next record?)
+at offset p (from fs.db):
+  u32 books            == fs.db b
+  u32 occurrences      == fs.db l
+  books × { u32 book_id, u32 end, u32 start }
+        book ids ascending; [start, end) indexes the occurrence array;
+        start of entry i == end of entry i-1, last end == occurrences
+  occurrences × u32 word_position
+        position of the word inside the book (0-based word index), ascending within a book
+then the next record's key:
+  u32 byte_length, UTF-8 word   (p of that word points right after it)
 ```
 
-For a frequent token (`''`, b=7378) the record continues as triplets of u32 that look like
-`(bookId?, ?, count?)`. To be decoded in phase 0 by comparing with `.rst` output.
+Size of a record = 8 + 12 × books + 4 × occurrences. Example: `שבת` is about 1.6 MB
+(133,500 books, 12.7 M occurrences): read only the directory first, then the slices you need.
+
+Book ids in postings can be deleted books that are no longer in the catalog (e.g. 538, 550,
+639). Filter hits against `system_books`. (`data\delBooks.bin` is an opaque hex string, not an id list.)
+
+### Sub-indexes (`searcher\subindexs\<name>\`)
+
+The main index stops at the books of an older version (max book id 679,646 for `והאידנא`).
+Newer and re-scanned books are in sub-indexes, each a full set `fs.db` + `tiny.db` + `words.bin`
+in the same formats:
+
+| Folder | fs.db | words.bin |
+| --- | --- | --- |
+| `22_133517728054915332` | 24 MB | 63 MB |
+| `22_1726642359`, `22_1726644239` | 2 MB | 4.5 MB |
+| `23_00001` | 847 MB | 6.5 GB |
+| `24` | 1.2 GB | 9.6 GB |
+
+Merge rule, verified against the official engine: process the main index, then the
+sub-indexes in name order; for a book that appears in several, **the later index replaces the
+earlier one** (do not add counts); finally drop books that are not in the catalog. For
+`והאידנא` this gives 22,028 books and 53,185 occurrences, identical to the engine's `.rst`
+output in every one of the 22,028 per-book counts. Summing instead of replacing gives 53,896 (wrong).
+
+### Official engine vs. what the app displays
+
+The engine returns all matching books. The app then hides some: for `והאידנא` it shows
+42,692 hits in 18,535 books out of the engine's 53,185 in 22,028. The app's hiding rule is not
+fully known. The closest tested rule (hide books that are replaced via `newBookId`, in `NO_BT`,
+or in a restricted package/permission) leaves 18,654 books. This project does not need the
+rule: it searches everything and marks access instead of hiding.
+
+The app's per-book number in brackets (e.g. `[82]`) is the occurrence count in that book, and
+"relevance" order is by that count.
+
+### Multi-word queries (verified on `שבת קודש`, 2026-11-03)
+
+With the app's "הצמדת מילים" (adjacent words) option **off**, the engine matches the words
+**within 30 word positions of each other, in either order**, and counts **one-to-one pairs**:
+walk both sorted position lists, pair two occurrences when `|a - b| <= 30` and advance both,
+otherwise advance the smaller. Result vs. the engine's `.rst`: 65,823 vs 65,835 books (0 extra
+books on our side), 424,089 vs 423,172 hits, identical per-book count in 65,056 books (98.8%).
+The remaining difference is some detail of the engine's pairing; not resolved.
+
+With "הצמדת מילים" **on**, the engine matches the adjacent phrase (word 2 at position + 1).
+Verified: engine 45,802 books / 252,478 hits; ours 45,794 / 252,469, identical per-book count
+in all 45,794 of our books, nothing extra on our side. The engine finds 8 more books (9 hits),
+probably the same small unexplained gap as in the proximity mode.
+
+Linked variants (`fsalternativewords`, e.g. `שב"ק`, `שבת קדש`) are **not** added by default:
+adding them makes the match worse.
+
+The app displayed 354,158 hits in 53,825 books for this query, again after its display filter.
+
+## Pages and word positions (`data\books_data_info.bin`, `data\books_data.bin`) - decoded
+
+`books_data_info.bin`: fixed array indexed by book id, 12 bytes per entry:
+`{ u64 offset, u32 size }` into `books_data.bin` (1,000,000 entries; size 0 = no record there).
+
+`books_data.bin`: concatenated gzip members. Each decompresses to a JSON array with 4 parts:
+
+```json
+[
+  [{"moredata": {"isText": 0}}],
+  [ {"id": 1475659, "name": "S0001", "position": 1, "bookId": 10758, "empty": 0,
+     "pagedata": [{"id": 1475659, "width": 1816, "height": 2368, "margin": 0,
+                   "firstWord": 0, "numWords": 41, "letter": "1", "pageId": 1475659}]}, ...],
+  [ {"title": "הלכות ערכין וחרמין ג", "type": 1, "id": 3280771, "position": 18, "pageId": 30, "page": 30}, ...],
+  [ [], [{"books": [{"bookId": 21709, "mmId": 2217395, "score": 0, "pageId": 0, "positionPage": 0}, ...]}], ... ]
+]
+```
+
+- Part 1: pages. `id` = global page id (same space as `categorybooks.pageId`), `name` = scan
+  name (`P0001L`, `S0002`, `Y0024`), `position` = page order (1-based),
+  `pagedata[0].letter` = printed page label (`קה`, `35 36`), `firstWord`/`numWords` = range of
+  word positions on the page.
+- Part 2: table of contents (ציונים): `title` and the page `position`.
+- Part 3: per page, links to other books (מראי מקומות), not yet used.
+
+Word position -> page: take pages with `numWords > 0`, **sort by `firstWord`** (the list is in
+page order, which is not always word order), binary-search the position. Verified on 3,001
+occurrences of `ברורה`: 98.6% fall inside a page range; the rest sit in gaps between ranges
+(assign them to the preceding page).
+
+Newer books are not in `books_data.bin`. They are in `data\books_data\`:
+
+- `booksdata_<unix time>.bin`: bundle. `u32 count`, then `count × { u32 book_id, u64 offset, u32 size }`,
+  then the gzip members (offsets are from the file start; verified contiguous, first offset = 4 + 16 × count).
+- `<book_id>.bin`: a single gzip member for one book.
+
+Lookup order: `<book_id>.bin`, then bundles newest first, then `books_data_info.bin`.
 
 ## Official search results (`searcher\results\*.rst`)
 

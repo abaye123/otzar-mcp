@@ -47,8 +47,9 @@ rest keeps working.
 | Launcher | `open_in_otzar` | `otzar.exe BOOK=<id>` | yes (the app needs it) |
 
 Full-text search sits behind a `SearchBackend` abstraction with two possible implementations:
-(A) read `words.bin` posting lists directly; (B) drive the official `searcherOtzar.exe`. Phase 0
-decides which one ships first.
+(A) read `words.bin` posting lists directly; (B) drive the official `searcherOtzar.exe`.
+Phase 0 decoded the posting lists and the word-position-to-page mapping, so A is the primary
+backend and B is only a fallback.
 
 ## 4. Tools
 
@@ -64,7 +65,7 @@ carries `id` (the catalog `system_books.id`) so Claude can cite precisely.
 | `browse_categories` | `category_id?`, `limit` | category, children, linked books with first page id | 1 | done |
 | `word_stats` | `word`, `include_alternatives`, `include_containing`, `limit` | books/occurrences, linked variants and abbreviations, containing words | 1 | done |
 | `open_in_otzar` | `book_id` | `{opened}` | 1 | done (page parameter unknown, see ROADMAP) |
-| `search_text` | `query`, `mode` (exact / all words / within N words), `book_ids`, filters, `limit`, `cursor` | books and pages ranked, snippet from phase 3 | 2 | todo |
+| `search_text` | `query`, `mode` (`near` = within N words, default 30 like the app / `phrase` = adjacent), `distance`, `book_ids`, filters, `limit`, `cursor` | books ranked by hit count (like the app's "relevance"), each with hit pages (scan name, printed page label); snippet from phase 3 | 2 | todo |
 | `read_page` | `book_id`, `page`, `count` (max 5) | OCR text of the pages | 3 | todo |
 
 Book summary fields: `id, name, volume, authors[{id,name,role}], year, year_ce, places, period, access{status, groups}`.
