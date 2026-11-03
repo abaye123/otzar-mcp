@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+flate2 = "1.1.10"
 rmcp = { version = "3.8.0", features = ["server", "transport-io", "macros"] }
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 schemars = "1.2.3"

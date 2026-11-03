@@ -41,7 +41,9 @@ Read this file first, then the doc that matches your task:
 src/main.rs       entry point: logging to stderr, config, stdio serve
 src/server.rs     MCP tools (rmcp #[tool_router]); each tool = params struct + async fn
 src/catalog.rs    catalog queries over data.db (books, authors, categories, access, alternatives)
-src/words.rs      full-text dictionary: searcher\fs.db and tiny.db
+src/words.rs      full-text index: main + sub-index segments (fs.db + words.bin), merge rule, postings
+src/search.rs     matching rules (word, phrase, near) equal to the official engine; ranking
+src/pages.rs      per-book page lists (books_data*.bin): word position -> page
 src/config.rs     otzar-mcp.toml, disk detection by content, default paths
 src/hebrew.rs     Hebrew numerals and year parsing (unit tested)
 tools/smoke_test.py         end-to-end MCP test over stdio against the real data

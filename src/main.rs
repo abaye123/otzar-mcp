@@ -10,6 +10,8 @@ compile_error!("otzar-mcp supports Windows only (Otzar HaHochma has no macOS or 
 mod catalog;
 mod config;
 mod hebrew;
+mod pages;
+mod search;
 mod server;
 mod words;
 

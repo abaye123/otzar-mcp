@@ -1,8 +1,10 @@
 //! MCP tool surface. Each tool runs its blocking SQLite work on a blocking thread.
 
-use crate::catalog::{BookQuery, Catalog};
+use crate::catalog::{BookQuery, BookSummary, Catalog};
 use crate::config::{self, Config};
-use crate::words::WordIndex;
+use crate::search::{self, Mode};
+use crate::words::FullText;
+use std::collections::BTreeMap;
 use anyhow::Context;
 use rmcp::{
     ErrorData, ServerHandler,
@@ -22,7 +24,7 @@ pub struct State {
     pub config: Config,
     pub config_path: Option<PathBuf>,
     catalog: Mutex<Option<Catalog>>,
-    words: Mutex<Option<WordIndex>>,
+    words: Mutex<Option<FullText>>,
 }
 
 impl State {
@@ -43,7 +45,8 @@ impl State {
         f(guard.as_ref().expect("catalog opened above"))
     }
 
-    fn with_words<R>(&self, f: impl FnOnce(&WordIndex) -> anyhow::Result<R>) -> anyhow::Result<R> {
+    /// Lock order: catalog before words, never the reverse.
+    fn with_words<R>(&self, f: impl FnOnce(&FullText) -> anyhow::Result<R>) -> anyhow::Result<R> {
         let mut guard = self.words.lock().map_err(|_| anyhow::anyhow!("word index lock poisoned"))?;
         // Re-detect when the disk was unplugged or re-lettered since the last call.
         if guard.as_ref().is_some_and(|w| !config::is_otzar_disk(&w.root)) {
@@ -51,7 +54,7 @@ impl State {
         }
         if guard.is_none() {
             let disk = self.config.find_disk().context(DISK_MISSING)?;
-            *guard = Some(WordIndex::open(&disk)?);
+            *guard = Some(FullText::open(&disk)?);
         }
         f(guard.as_ref().expect("word index opened above"))
     }
@@ -147,6 +150,74 @@ pub struct WordStatsParams {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchTextParams {
+    /// Words to find, in Hebrew, exactly as printed (prefixes are part of the word: "והאידנא", "בשבת").
+    pub query: String,
+    /// "near" (default): all words within `distance` words of each other, in any order.
+    /// "phrase": the words adjacent and in this order.
+    pub mode: Option<String>,
+    /// Max distance in words for mode "near" (default 30, like the app).
+    pub distance: Option<u32>,
+    /// Only these book ids.
+    pub book_ids: Option<Vec<i64>>,
+    /// Only books whose title contains these words.
+    pub title: Option<String>,
+    /// Only books by an author whose name contains these words.
+    pub author: Option<String>,
+    /// Only books by this author id (find_authors).
+    pub author_id: Option<i64>,
+    /// Only books printed from this year: Gregorian (1850) or Anno Mundi (5610).
+    pub year_from: Option<i32>,
+    /// Only books printed up to this year.
+    pub year_to: Option<i32>,
+    /// Only books printed in this place.
+    pub place: Option<String>,
+    /// Only books of this era (1-6, see find_books).
+    pub period: Option<i64>,
+    /// Leave out books outside the user's subscription (default false: they are returned and marked).
+    pub only_subscription: Option<bool>,
+    /// Books per response (default 20).
+    pub limit: Option<usize>,
+    /// Books to skip, for paging.
+    pub offset: Option<usize>,
+    /// Pages listed per book (default 10), in page order.
+    pub pages_per_book: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct HitPage {
+    /// Page order in the book (1-based), for open_in_otzar and read_page.
+    page: i64,
+    /// Printed page label.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    label: String,
+    /// Scan name.
+    scan: String,
+    page_id: i64,
+    hits: u32,
+}
+
+#[derive(Serialize)]
+struct SearchHit {
+    #[serde(flatten)]
+    book: BookSummary,
+    hits: u32,
+    /// Number of pages with hits; `pages` lists the first ones.
+    hit_pages: usize,
+    pages: Vec<HitPage>,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    query: String,
+    mode: String,
+    total_books: usize,
+    total_hits: u64,
+    offset: usize,
+    results: Vec<SearchHit>,
+}
+
 #[derive(Serialize)]
 struct WordStatsResult {
     word: String,
@@ -181,6 +252,9 @@ struct Status {
     catalog: Option<String>,
     catalog_books: Option<i64>,
     catalog_error: Option<String>,
+    /// Full-text index segments in merge order (main, then sub-indexes).
+    index_segments: Option<Vec<String>>,
+    index_error: Option<String>,
     otzar_exe: String,
     otzar_exe_found: bool,
     subscription_packages: Option<Vec<String>>,
@@ -261,17 +335,15 @@ impl OtzarServer {
             if word.is_empty() || word.contains(char::is_whitespace) {
                 anyhow::bail!("give a single word");
             }
-            let alternatives = if p.include_alternatives.unwrap_or(true) {
-                st.with_catalog(|c| c.alternatives(&word))?
-            } else {
-                vec![]
-            };
             let limit = st.limit(p.limit, 20);
+            st.with_catalog(|c| {
+            let alternatives = if p.include_alternatives.unwrap_or(true) { c.alternatives(&word)? } else { vec![] };
+            let keep = |b: u32| c.has_book(b as i64);
             st.with_words(|w| {
-                let hit = w.lookup(&word)?;
+                let hit = w.stat(&word, &keep)?;
                 let mut alt_stats = Vec::new();
                 for (alt, kind) in alternatives {
-                    let stat = if alt.contains(char::is_whitespace) { None } else { w.lookup(&alt)? };
+                    let stat = if alt.contains(char::is_whitespace) { None } else { w.stat(&alt, &keep)? };
                     alt_stats.push(AlternativeStat {
                         kind,
                         books: stat.as_ref().map(|s| s.books),
@@ -291,6 +363,99 @@ impl OtzarServer {
                     word,
                     alternatives: alt_stats,
                     containing,
+                })
+            })
+            })
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Full-text search in the scanned books, with the same rules as the official Otzar search. Returns books ranked by number of hits (like the app's 'relevance'), each with the pages where the hits are (printed page label and scan name). One word, or several words: mode 'near' (default, words within 30 words of each other, like the app with הצמדת מילים off) or 'phrase' (adjacent and in order, like הצמדת מילים on). Words are matched exactly as printed: try prefixed forms too (ו, ה, ב, ל, ש, ד). Optional catalog filters restrict the books. Needs the disk.",
+        annotations(read_only_hint = true)
+    )]
+    async fn search_text(&self, Parameters(p): Parameters<SearchTextParams>) -> Result<CallToolResult, ErrorData> {
+        self.run(move |st| {
+            let words: Vec<String> = p.query.split_whitespace().map(str::to_string).collect();
+            anyhow::ensure!(!words.is_empty(), "query is empty");
+            anyhow::ensure!(words.len() <= 8, "at most 8 words");
+            let mode = match p.mode.as_deref().unwrap_or("near") {
+                "phrase" => Mode::Phrase,
+                "near" => Mode::Near(p.distance.unwrap_or(search::DEFAULT_DISTANCE).clamp(1, 1000)),
+                other => anyhow::bail!("unknown mode '{other}': use 'near' or 'phrase'"),
+            };
+            let limit = st.limit(p.limit, 20);
+            let offset = p.offset.unwrap_or(0);
+            let pages_per_book = p.pages_per_book.unwrap_or(10).clamp(1, 50);
+            let query = BookQuery {
+                title: p.title,
+                author: p.author,
+                author_id: p.author_id,
+                year_from: p.year_from,
+                year_to: p.year_to,
+                place: p.place,
+                period: p.period,
+                limit: 0,
+                offset: 0,
+            };
+            st.with_catalog(|c| {
+                let mut restrict = c.book_ids(&query)?;
+                if let Some(ids) = &p.book_ids {
+                    let given: std::collections::HashSet<i64> = ids.iter().copied().collect();
+                    restrict = Some(match restrict {
+                        Some(r) => r.intersection(&given).copied().collect(),
+                        None => given,
+                    });
+                }
+                let only_subscription = p.only_subscription.unwrap_or(false);
+                let keep = |b: u32| {
+                    let id = b as i64;
+                    c.has_book(id)
+                        && restrict.as_ref().is_none_or(|r| r.contains(&id))
+                        && (!only_subscription || c.access(id).status != "not_in_subscription")
+                };
+                st.with_words(|w| {
+                    let outcome = search::run(w, &words, mode, &keep)?;
+                    let mut results = Vec::new();
+                    for &(book, hits) in outcome.ranked.iter().skip(offset).take(limit) {
+                        let Some(summary) = c.summary_by_id(book as i64)? else { continue };
+                        let anchors = outcome.anchors(w, book)?;
+                        let mut by_page: BTreeMap<i64, HitPage> = BTreeMap::new();
+                        if let Some(pages) = w.pages.book(book as i64)? {
+                            for pos in anchors {
+                                if let Some(page) = pages.page_for(pos) {
+                                    by_page
+                                        .entry(page.position)
+                                        .or_insert_with(|| HitPage {
+                                            page: page.position,
+                                            label: page.label.clone(),
+                                            scan: page.scan.clone(),
+                                            page_id: page.id,
+                                            hits: 0,
+                                        })
+                                        .hits += 1;
+                                }
+                            }
+                        }
+                        let hit_pages = by_page.len();
+                        results.push(SearchHit {
+                            book: summary,
+                            hits,
+                            hit_pages,
+                            pages: by_page.into_values().take(pages_per_book).collect(),
+                        });
+                    }
+                    Ok(SearchResult {
+                        query: words.join(" "),
+                        mode: match mode {
+                            Mode::Phrase => "phrase".into(),
+                            Mode::Near(d) => format!("near {d}"),
+                        },
+                        total_books: outcome.ranked.len(),
+                        total_hits: outcome.total_hits(),
+                        offset,
+                        results,
+                    })
                 })
             })
         })
@@ -336,8 +501,14 @@ impl OtzarServer {
                 Ok((path, count, codes)) => (Some(path), Some(count), codes, None),
                 Err(e) => (st.config.catalog_db(disk.as_deref()), None, vec![], Some(format!("{e:#}"))),
             };
+            let (index_segments, index_error) = match st.with_words(|w| Ok(w.segment_names())) {
+                Ok(names) => (Some(names), None),
+                Err(e) => (None, Some(format!("{e:#}"))),
+            };
             let exe = st.config.otzar_exe();
             Ok(Status {
+                index_segments,
+                index_error,
                 version: env!("CARGO_PKG_VERSION"),
                 config_file: st.config_path.as_ref().map(|p| p.display().to_string()),
                 disk_version: disk.as_deref().and_then(|d| config::read_marker(d, r"data\disk-ver.txt")),

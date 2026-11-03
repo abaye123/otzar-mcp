@@ -51,9 +51,10 @@ Set `OTZAR_MCP_LOG=debug` for verbose logs (stderr).
 | `find_authors` | author lookup | no |
 | `browse_categories` | category tree and linked books | no |
 | `word_stats` | how common a word is in the full text, variants, containing words | yes |
+| `search_text` | full-text search (word, phrase, words near each other), books ranked by hits, with pages | yes |
 | `open_in_otzar` | open a book in the official app | yes |
 
-Planned: `search_text` (full-text hits by book and page) and `read_page` (page text).
+Planned: `read_page` (page text).
 See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Testing

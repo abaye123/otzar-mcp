@@ -37,14 +37,17 @@ Each phase ends with something usable. Update the checkboxes and dates as work l
 
 ## Phase 2 - full-text search
 
-- [ ] `word_stats` reads only the main `fs.db`; merge the sub-indexes (same rule as search) so
-      books and occurrences include newer books.
-
-- [ ] `SearchBackend` trait; backend A (mmap `words.bin` via `memmap2`) and/or backend B (official engine).
-- [ ] `search_text`: exact word, all words, within N words; filters: book ids, category, era, years.
-- [ ] Use `fsalternativewords` to expand queries like the app does (optional flag).
-- [ ] Ranking comparable to the app (`rate` in `.rst`).
-- Exit criterion: results match the app; under 2 s for a common word with a filter.
+- [x] `word_stats` merges the sub-indexes and drops deleted books (2026-11-03).
+- [x] Index reader (`words.rs`): all segments, later replaces earlier, positioned reads
+      (per-book slices for small sets, one sequential read for large ones). No official engine needed.
+- [x] `search_text`: one word, `phrase`, `near` (default 30); filters: book ids, catalog filters,
+      only_subscription; hit pages per book (`pages.rs`). Ranked by hits like the app (2026-11-03).
+- [x] Smoke test numbers equal the research numbers: והאידנא 22,028/53,185 (engine-identical),
+      שבת קודש phrase 45,794/252,469, near 65,823/424,089. Timings 80-500 ms warm.
+- [ ] Category filter (`categorybooks` has no bookId index; needs an in-memory map or a join on categoryId).
+- [ ] Optional query expansion with `fsalternativewords` (the engine does not do it by default).
+- [ ] Prefix handling ("אותיות שימוש" in the app): match the word with common prefixes.
+- Exit criterion: results match the app; under 2 s for a common word with a filter. Met for the tested queries.
 
 ## Phase 3 - page text
 

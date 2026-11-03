@@ -27,6 +27,12 @@ CALLS = [
     ("browse_categories", {"category_id": 1, "limit": 5}),
     ("word_stats", {"word": "שבת"}),
     ("word_stats", {"word": "ארץ", "include_containing": True, "limit": 5}),
+    # Reference numbers from the official engine (docs/DATA-FORMATS.md):
+    # והאידנא 22,028 books / 53,185 hits; שבת קודש phrase 45,802 / 252,478; near 65,835 / 423,172.
+    ("search_text", {"query": "והאידנא", "limit": 2, "pages_per_book": 3}),
+    ("search_text", {"query": "שבת קודש", "mode": "phrase", "limit": 2, "pages_per_book": 3}),
+    ("search_text", {"query": "שבת קודש", "limit": 1, "pages_per_book": 2}),
+    ("search_text", {"query": "והאידנא", "author": "קוק", "limit": 3, "pages_per_book": 2}),
 ]
 
 

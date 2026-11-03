@@ -7,7 +7,7 @@ use crate::hebrew;
 use anyhow::Context;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params, types::Value};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Package codes that look like content filters or base tiers, not purchasable add-ons.
@@ -160,6 +160,18 @@ pub struct Catalog {
     /// bookId -> restricted and non-restricted groups
     groups: HashMap<i64, Vec<Group>>,
     allowed: Option<Vec<String>>,
+    /// Every book id in the catalog. The full-text index still lists deleted books.
+    books: HashSet<i64>,
+}
+
+/// Book restriction built from catalog filters.
+enum Filter {
+    /// No filter given.
+    All,
+    /// Filters given, nothing can match (e.g. no year label in the range).
+    Nothing,
+    /// SQL condition on `system_books b` and its parameters.
+    Sql(String, Vec<Value>),
 }
 
 pub fn open_read_only(path: &Path) -> anyhow::Result<Connection> {
@@ -237,6 +249,12 @@ impl Catalog {
             .as_ref()
             .map(|codes| codes.iter().map(|c| c.trim().to_uppercase()).collect());
 
+        let books = {
+            let mut stmt = conn.prepare("select id from system_books")?;
+            stmt.query_map([], |r| r.get::<_, i64>(0))?
+                .collect::<Result<HashSet<_>, _>>()?
+        };
+
         Ok(Self {
             conn,
             path: path.to_path_buf(),
@@ -244,7 +262,27 @@ impl Catalog {
             periods,
             groups,
             allowed,
+            books,
         })
+    }
+
+    pub fn has_book(&self, id: i64) -> bool {
+        self.books.contains(&id)
+    }
+
+    /// Book ids matching the catalog filters of `q`; `None` when `q` has no filter.
+    pub fn book_ids(&self, q: &BookQuery) -> anyhow::Result<Option<HashSet<i64>>> {
+        match self.filter(q)? {
+            Filter::All => Ok(None),
+            Filter::Nothing => Ok(Some(HashSet::new())),
+            Filter::Sql(cond, args) => {
+                let mut stmt = self.conn.prepare(&format!("select b.id from system_books b where {cond}"))?;
+                let ids = stmt
+                    .query_map(rusqlite::params_from_iter(args.iter()), |r| r.get::<_, i64>(0))?
+                    .collect::<Result<HashSet<_>, _>>()?;
+                Ok(Some(ids))
+            }
+        }
     }
 
     pub fn book_count(&self) -> anyhow::Result<i64> {
@@ -304,6 +342,16 @@ impl Catalog {
         (label, am.map(hebrew::am_to_ce))
     }
 
+    /// Summary of a book by id; `None` when it is not in the catalog.
+    pub fn summary_by_id(&self, id: i64) -> anyhow::Result<Option<BookSummary>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .prepare_cached("select name, coalesce(volume, '') from system_books where id = ?1")?
+            .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        row.map(|(name, volume)| self.summary(id, name, volume)).transpose()
+    }
+
     fn summary(&self, id: i64, name: String, volume: String) -> anyhow::Result<BookSummary> {
         let mut stmt = self.conn.prepare_cached(
             "select a.id, a.name, coalesce(t.title, '') from system_bookauthors ba
@@ -351,10 +399,9 @@ impl Catalog {
         })
     }
 
-    pub fn find_books(&self, q: &BookQuery) -> anyhow::Result<Page<BookSummary>> {
+    fn filter(&self, q: &BookQuery) -> anyhow::Result<Filter> {
         let mut conds: Vec<String> = Vec::new();
         let mut args: Vec<Value> = Vec::new();
-        let mut order = "b.id".to_string();
 
         if let Some(title) = q.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             let words: Vec<&str> = title.split_whitespace().collect();
@@ -413,7 +460,7 @@ impl Catalog {
                 .map(|(id, _)| id.to_string())
                 .collect();
             if ids.is_empty() {
-                return Ok(Page { total: 0, offset: q.offset, items: vec![] });
+                return Ok(Filter::Nothing);
             }
             conds.push(format!(
                 "exists (select 1 from bookyears y where y.bookId = b.id and y.fromYear in ({}))",
@@ -430,9 +477,20 @@ impl Catalog {
         }
 
         if conds.is_empty() {
-            anyhow::bail!("give at least one filter: title, author, author_id, place, year_from/year_to or period");
+            return Ok(Filter::All);
         }
-        let filter = conds.join(" and ");
+        Ok(Filter::Sql(conds.join(" and "), args))
+    }
+
+    pub fn find_books(&self, q: &BookQuery) -> anyhow::Result<Page<BookSummary>> {
+        let (filter, mut args) = match self.filter(q)? {
+            Filter::All => anyhow::bail!(
+                "give at least one filter: title, author, author_id, place, year_from/year_to or period"
+            ),
+            Filter::Nothing => return Ok(Page { total: 0, offset: q.offset, items: vec![] }),
+            Filter::Sql(cond, args) => (cond, args),
+        };
+        let mut order = "b.id".to_string();
 
         let total: i64 = self.conn.query_row(
             &format!("select count(*) from system_books b where {filter}"),

@@ -65,7 +65,7 @@ carries `id` (the catalog `system_books.id`) so Claude can cite precisely.
 | `browse_categories` | `category_id?`, `limit` | category, children, linked books with first page id | 1 | done |
 | `word_stats` | `word`, `include_alternatives`, `include_containing`, `limit` | books/occurrences, linked variants and abbreviations, containing words | 1 | done |
 | `open_in_otzar` | `book_id` | `{opened}` | 1 | done (page parameter unknown, see ROADMAP) |
-| `search_text` | `query`, `mode` (`near` = within N words, default 30 like the app / `phrase` = adjacent), `distance`, `book_ids`, filters, `limit`, `cursor` | books ranked by hit count (like the app's "relevance"), each with hit pages (scan name, printed page label); snippet from phase 3 | 2 | todo |
+| `search_text` | `query`, `mode` (`near` = within `distance` words, default 30 like the app / `phrase` = adjacent), `distance`, `book_ids`, catalog filters (`title`, `author`, `author_id`, `year_from`, `year_to`, `place`, `period`), `only_subscription`, `limit`, `offset`, `pages_per_book` | `{total_books, total_hits, results: [book summary + hits, hit_pages, pages[{page, label, scan, page_id, hits}]]}` ranked by hits (the app's "relevance"); snippets from phase 3 | 2 | done |
 | `read_page` | `book_id`, `page`, `count` (max 5) | OCR text of the pages | 3 | todo |
 
 Book summary fields: `id, name, volume, authors[{id,name,role}], year, year_ce, places, period, access{status, groups}`.
